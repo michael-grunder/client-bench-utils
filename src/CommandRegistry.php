@@ -37,63 +37,72 @@ final class CommandRegistry
                 'get',
                 CommandMode::Read,
                 CommandType::String,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->get($key),
+                'get',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->set($key, $payloads->string($payloads->maxStringLength()))
             ),
             'set' => new CommandDefinition(
                 'set',
                 CommandMode::Write,
                 CommandType::String,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->set($key, $payloads->string($variant)),
+                'set',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, $payloads->string($variant)],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->set($key, $payloads->string($payloads->maxStringLength()))
             ),
             'incr' => new CommandDefinition(
                 'incr',
                 CommandMode::Write,
                 CommandType::Int,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->incr($key),
+                'incr',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->set($key, 0)
             ),
             'decr' => new CommandDefinition(
                 'decr',
                 CommandMode::Write,
                 CommandType::Int,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->decr($key),
+                'decr',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->set($key, 0)
             ),
             'hset' => new CommandDefinition(
                 'hset',
                 CommandMode::Write,
                 CommandType::Hash,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->hSet($key, $payloads->hashFieldName($variant), $payloads->hashFieldValue($variant)),
+                'hSet',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, $payloads->hashFieldName($variant), $payloads->hashFieldValue($variant)],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->hMSet($key, $payloads->hash($payloads->maxCollectionLength()))
             ),
             'hmset' => new CommandDefinition(
                 'hmset',
                 CommandMode::Write,
                 CommandType::Hash,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->hMSet($key, $payloads->hash($variant)),
+                'hMSet',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, $payloads->hash($variant)],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->hMSet($key, $payloads->hash($payloads->maxCollectionLength()))
             ),
             'hget' => new CommandDefinition(
                 'hget',
                 CommandMode::Read,
                 CommandType::Hash,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->hGet($key, $payloads->hashFieldName($variant)),
+                'hGet',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, $payloads->hashFieldName($variant)],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->hMSet($key, $payloads->hash($payloads->maxCollectionLength()))
             ),
             'hgetall' => new CommandDefinition(
                 'hgetall',
                 CommandMode::Read,
                 CommandType::Hash,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->hGetAll($key),
+                'hGetAll',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key],
                 static fn (object $client, string $key, PayloadFactory $payloads): mixed => $client->hMSet($key, $payloads->hash($payloads->maxCollectionLength()))
             ),
             'lpush' => new CommandDefinition(
                 'lpush',
                 CommandMode::Write,
                 CommandType::List,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->lPush($key, ...$payloads->list($variant)),
+                'lPush',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, ...$payloads->list($variant)],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 
@@ -104,7 +113,8 @@ final class CommandRegistry
                 'lrange',
                 CommandMode::Read,
                 CommandType::List,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->lRange($key, 0, $payloads->rangeStop($variant)),
+                'lRange',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, 0, $payloads->rangeStop($variant)],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 
@@ -115,7 +125,8 @@ final class CommandRegistry
                 'sadd',
                 CommandMode::Write,
                 CommandType::Set,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->sAdd($key, ...$payloads->set($variant)),
+                'sAdd',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, ...$payloads->set($variant)],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 
@@ -126,7 +137,8 @@ final class CommandRegistry
                 'smembers',
                 CommandMode::Read,
                 CommandType::Set,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->sMembers($key),
+                'sMembers',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 
@@ -137,7 +149,8 @@ final class CommandRegistry
                 'zadd',
                 CommandMode::Write,
                 CommandType::Zset,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->zAdd($key, ...$payloads->zsetPairs($variant)),
+                'zAdd',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, ...$payloads->zsetPairs($variant)],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 
@@ -148,7 +161,8 @@ final class CommandRegistry
                 'zrange',
                 CommandMode::Read,
                 CommandType::Zset,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->zRange($key, 0, $payloads->rangeStop($variant)),
+                'zRange',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, 0, $payloads->rangeStop($variant)],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 
@@ -159,7 +173,8 @@ final class CommandRegistry
                 'zscore',
                 CommandMode::Read,
                 CommandType::Zset,
-                static fn (object $client, string $key, PayloadFactory $payloads, int $variant): mixed => $client->zScore($key, $payloads->zsetMember($variant)),
+                'zScore',
+                static fn (string $key, PayloadFactory $payloads, int $variant): array => [$key, $payloads->zsetMember($variant)],
                 static function (object $client, string $key, PayloadFactory $payloads): mixed {
                     $client->del($key);
 

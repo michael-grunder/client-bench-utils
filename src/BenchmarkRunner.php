@@ -28,6 +28,10 @@ final class BenchmarkRunner
         $keyspace = $this->buildKeyspace($commands, $config->keys);
         $client = $this->clientFactory->create($config);
 
+        if ($config->debugIntrospection) {
+            $this->printClientIntrospection($client, $commands);
+        }
+
         $this->primeKeyspace($client, $commands, $payloads, $keyspace);
 
         $startedAt = microtime(true);
@@ -142,11 +146,116 @@ final class BenchmarkRunner
     private function executeOperation(object $client, Operation $operation, PayloadFactory $payloads, array $keyspace): void
     {
         $key = $keyspace[$operation->command->type->value][$operation->keyIndex];
-        $result = $operation->command->execute($client, $key, $payloads, $operation->variant);
+        $arguments = $operation->command->buildArguments($key, $payloads, $operation->variant);
+
+        try {
+            $result = $client->{$operation->command->clientMethod}(...$arguments);
+        } catch (\Throwable $exception) {
+            $this->printOperationFailureDetails($client, $operation, $key, $arguments, $exception);
+
+            throw $exception;
+        }
 
         if ($result === false && $operation->command->name !== 'get' && $operation->command->name !== 'hget' && $operation->command->name !== 'zscore') {
             throw new \RuntimeException(sprintf('Command "%s" failed for key "%s".', $operation->command->name, $key));
         }
+    }
+
+    /**
+     * @param list<CommandDefinition> $commands
+     */
+    private function printClientIntrospection(object $client, array $commands): void
+    {
+        fwrite(STDERR, sprintf("Debug introspection enabled for %s\n", $client::class));
+
+        $printed = [];
+
+        foreach ($commands as $command) {
+            if (isset($printed[$command->clientMethod])) {
+                continue;
+            }
+
+            fwrite(STDERR, sprintf("  %s => %s\n", $command->name, $this->describeMethodSignature($client, $command->clientMethod)));
+            $printed[$command->clientMethod] = true;
+        }
+    }
+
+    /**
+     * @param list<mixed> $arguments
+     */
+    private function printOperationFailureDetails(
+        object $client,
+        Operation $operation,
+        string $key,
+        array $arguments,
+        \Throwable $exception,
+    ): void {
+        fwrite(STDERR, "Operation failure details:\n");
+        fwrite(STDERR, sprintf("  client: %s\n", $client::class));
+        fwrite(STDERR, sprintf("  command: %s\n", $operation->command->name));
+        fwrite(STDERR, sprintf("  method: %s\n", $operation->command->clientMethod));
+        fwrite(STDERR, sprintf("  key: %s\n", $key));
+        fwrite(STDERR, sprintf("  variant: %d\n", $operation->variant));
+        fwrite(STDERR, sprintf("  signature: %s\n", $this->describeMethodSignature($client, $operation->command->clientMethod)));
+
+        foreach ($arguments as $index => $argument) {
+            fwrite(STDERR, sprintf("  arg[%d]: %s\n", $index, $this->describeValue($argument)));
+        }
+
+        fwrite(STDERR, sprintf("  exception: %s\n", $exception->getMessage()));
+    }
+
+    private function describeMethodSignature(object $client, string $method): string
+    {
+        if (!method_exists($client, $method)) {
+            return sprintf('%s::%s (missing)', $client::class, $method);
+        }
+
+        $reflection = new \ReflectionMethod($client, $method);
+        $parameters = array_map(
+            static function (\ReflectionParameter $parameter): string {
+                $type = $parameter->getType();
+                $typeName = $type instanceof \ReflectionNamedType
+                    ? $type->getName()
+                    : ($type instanceof \ReflectionUnionType
+                        ? implode('|', array_map(static fn (\ReflectionNamedType $namedType): string => $namedType->getName(), $type->getTypes()))
+                        : 'mixed');
+
+                return sprintf('$%s: %s', $parameter->getName(), $typeName);
+            },
+            $reflection->getParameters(),
+        );
+
+        return sprintf('%s::%s(%s)', $client::class, $reflection->getName(), implode(', ', $parameters));
+    }
+
+    private function describeValue(mixed $value): string
+    {
+        if (is_int($value) || is_float($value)) {
+            return sprintf('%s(%s)', get_debug_type($value), (string) $value);
+        }
+
+        if (is_string($value)) {
+            return sprintf('string("%s")', addcslashes($value, "\0..\37\\\""));
+        }
+
+        if (is_bool($value)) {
+            return sprintf('bool(%s)', $value ? 'true' : 'false');
+        }
+
+        if ($value === null) {
+            return 'null';
+        }
+
+        if (is_array($value)) {
+            $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+            return sprintf('array(%d) %s', count($value), $encoded === false ? '[unencodable]' : $encoded);
+        }
+
+        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return sprintf('%s(%s)', get_debug_type($value), $encoded === false ? '[unencodable]' : $encoded);
     }
 
     /**

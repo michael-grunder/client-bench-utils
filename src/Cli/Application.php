@@ -32,6 +32,7 @@ final class Application
             'keys:',
             'class:',
             'commands:',
+            'debug-introspection',
             'pipeline',
             'multi',
             'chunk-size:',
@@ -71,6 +72,7 @@ final class Application
             $keys,
             $class,
             $commands,
+            array_key_exists('debug-introspection', $options),
             array_key_exists('pipeline', $options),
             array_key_exists('multi', $options),
             $chunkSize,
@@ -176,6 +178,7 @@ Options:
   --keys <int>           Keyspace size per data type. Default: 1000
   --class <string>       relay or redis. Default: relay
   --commands <list>      Comma-separated commands and/or groups. Default: @all
+  --debug-introspection  Print client reflection and failing call arguments
   --pipeline             Enable pipelining
   --multi                Enable MULTI/EXEC batching
   --chunk-size <int>     Commands per batch when pipeline and/or multi is enabled. Default: 1000

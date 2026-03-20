@@ -23,6 +23,7 @@ The benchmark:
 - pre-generates keys, payload templates, and the operation plan
 - primes the required keyspace before measurement
 - optionally executes work in pipeline and/or MULTI batches
+- can print method reflection and failing call arguments with `--debug-introspection`
 - reports periodic throughput updates and a final summary
 
 Use `--help` for the full option list.

@@ -11,6 +11,7 @@ final readonly class BenchmarkConfig
         public int $keys,
         public string $class,
         public string $commands,
+        public bool $debugIntrospection,
         public bool $pipeline,
         public bool $multi,
         public int $chunkSize,

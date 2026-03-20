@@ -7,6 +7,7 @@ require __DIR__ . '/../src/bootstrap.php';
 use Mike\BenchUtils\AliasSampler;
 use Mike\BenchUtils\CommandRegistry;
 use Mike\BenchUtils\CommandMode;
+use Mike\BenchUtils\Cli\Application;
 use Mike\BenchUtils\OperationPlanner;
 use Mike\BenchUtils\PayloadFactory;
 
@@ -44,6 +45,24 @@ $tests['payload slices stay bounded'] = static function () use ($assert): void {
     $assert(count($payloads->hash(5)) === 5, 'Hash payload slice length mismatch.');
     $assert(count($payloads->list(999)) === $payloads->maxCollectionLength(), 'List payload slice should clamp at max length.');
     $assert(count($payloads->zsetPairs(2)) === 4, 'Zset pair slice length mismatch.');
+};
+
+$tests['zrange command exposes integer range arguments'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $command = $registry->resolve('zrange')[0];
+    $arguments = $command->buildArguments('zset:0', $payloads, 4);
+
+    $assert($arguments[0] === 'zset:0', 'Unexpected zrange key.');
+    $assert($arguments[1] === 0, 'zrange start argument should remain an int for introspection.');
+    $assert(is_int($arguments[2]), 'zrange stop argument should remain an int for introspection.');
+};
+
+$tests['help output documents debug introspection flag'] = static function () use ($assert): void {
+    $reflection = new ReflectionMethod(Application::class, 'help');
+    $help = $reflection->invoke(null);
+
+    $assert(str_contains($help, '--debug-introspection'), 'Help output is missing the debug introspection flag.');
 };
 
 $tests['planner honors read heavy temperature'] = static function () use ($assert): void {
