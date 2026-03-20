@@ -22,6 +22,7 @@ You can also subtract commands or groups from the selected set:
 ```bash
 php bin/bench-command --commands !zrange
 php bin/bench-command --commands @read,!zrange
+php bin/bench-command --commands @write,!@del
 ```
 
 If a `--commands` list contains only exclusions, the benchmark starts from `@all`
@@ -41,5 +42,8 @@ The benchmark:
 - optionally executes work in pipeline and/or MULTI batches
 - can print method reflection and failing call arguments with `--debug-introspection`
 - reports periodic throughput updates and a final summary
+
+Available groups include `@all`, `@read`, `@write`, `@del`, `@string`,
+`@hash`, `@list`, `@set`, `@zset`, and `@numeric`.
 
 Use `--help` for the full option list.

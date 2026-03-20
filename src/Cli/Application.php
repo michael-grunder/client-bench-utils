@@ -199,7 +199,7 @@ Options:
   --help                 Show this help
 
 Groups:
-  @all @read @write @string @hash @list @set @zset @numeric
+  @all @read @write @del @string @hash @list @set @zset @numeric
 
 Examples:
   --commands @read,@hash

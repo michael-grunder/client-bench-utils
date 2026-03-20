@@ -24,7 +24,7 @@ $tests['command groups resolve without duplicates'] = static function () use ($a
     $commands = $registry->resolve('@read,@hash,get');
     $names = array_map(static fn ($command): string => $command->name, $commands);
 
-    $assert($names === ['get', 'hget', 'hgetall', 'lrange', 'smembers', 'zrange', 'zscore', 'hset', 'hmset'], 'Unexpected resolved command order.');
+    $assert($names === ['get', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard', 'hset', 'hmset'], 'Unexpected resolved command order.');
 };
 
 $tests['command exclusions can subtract from the default set'] = static function () use ($assert): void {
@@ -41,7 +41,24 @@ $tests['command exclusions can subtract included groups and aliases'] = static f
     $commands = $registry->resolve('@read,~zrange,!zscore');
     $names = array_map(static fn ($command): string => $command->name, $commands);
 
-    $assert($names === ['get', 'hget', 'hgetall', 'lrange', 'smembers'], 'Unexpected mixed include/exclude resolution.');
+    $assert($names === ['get', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zcard'], 'Unexpected mixed include/exclude resolution.');
+};
+
+$tests['delete group resolves both delete commands'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $commands = $registry->resolve('@del');
+    $names = array_map(static fn ($command): string => $command->name, $commands);
+
+    $assert($names === ['del', 'unlink'], 'Unexpected delete group resolution.');
+};
+
+$tests['delete group can be excluded from write commands'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $commands = $registry->resolve('@write,!@del');
+    $names = array_map(static fn ($command): string => $command->name, $commands);
+
+    $assert(!in_array('del', $names, true), 'del should be removed by @del exclusion.');
+    $assert(!in_array('unlink', $names, true), 'unlink should be removed by @del exclusion.');
 };
 
 $tests['alias sampler favors heavier weight'] = static function () use ($assert): void {
@@ -73,6 +90,16 @@ $tests['zrange command exposes integer range arguments'] = static function () us
     $assert($arguments[0] === 'zset:0', 'Unexpected zrange key.');
     $assert($arguments[1] === 0, 'zrange start argument should remain an int for introspection.');
     $assert(is_int($arguments[2]), 'zrange stop argument should remain an int for introspection.');
+};
+
+$tests['smismember command expands members as variadic arguments'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $command = $registry->resolve('smismember')[0];
+    $arguments = $command->buildArguments('set:0', $payloads, 3);
+
+    $assert($arguments[0] === 'set:0', 'Unexpected smismember key.');
+    $assert(count($arguments) === 4, 'smismember should pass the key plus each member as a separate argument.');
 };
 
 $tests['help output documents debug introspection flag'] = static function () use ($assert): void {
