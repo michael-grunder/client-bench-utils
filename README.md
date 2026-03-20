@@ -27,6 +27,12 @@ php bin/bench-command --commands @read,!zrange
 If a `--commands` list contains only exclusions, the benchmark starts from `@all`
 and removes those entries. Both `!name` and `~name` are accepted.
 
+To print the implemented command names without running a benchmark:
+
+```bash
+php bin/bench-command --list-commands
+```
+
 The benchmark:
 
 - resolves command groups into an explicit command set

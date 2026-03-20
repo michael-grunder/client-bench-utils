@@ -185,6 +185,14 @@ final class CommandRegistry
     }
 
     /**
+     * @return list<string>
+     */
+    public function supportedCommandNames(): array
+    {
+        return array_keys($this->definitions());
+    }
+
+    /**
      * @return list<CommandDefinition>
      */
     public function resolve(string $spec): array

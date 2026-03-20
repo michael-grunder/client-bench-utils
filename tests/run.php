@@ -80,7 +80,20 @@ $tests['help output documents debug introspection flag'] = static function () us
     $help = $reflection->invoke(null);
 
     $assert(str_contains($help, '--debug-introspection'), 'Help output is missing the debug introspection flag.');
+    $assert(str_contains($help, '--list-commands'), 'Help output is missing the supported commands flag.');
     $assert(str_contains($help, '!name'), 'Help output should document command exclusion syntax.');
+};
+
+$tests['supported commands output lists implemented commands'] = static function () use ($assert): void {
+    $reflection = new ReflectionMethod(Application::class, 'supportedCommands');
+    $output = $reflection->invoke(null);
+    $registry = new CommandRegistry();
+
+    $assert(str_starts_with($output, "Supported commands:\n"), 'Supported command output should start with a heading.');
+
+    foreach ($registry->supportedCommandNames() as $name) {
+        $assert(str_contains($output, sprintf("  %s\n", $name)), sprintf('Supported command output is missing "%s".', $name));
+    }
 };
 
 $tests['planner honors read heavy temperature'] = static function () use ($assert): void {

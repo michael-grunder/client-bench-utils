@@ -28,6 +28,7 @@ final class Application
     {
         $options = getopt('', [
             'help',
+            'list-commands',
             'count:',
             'keys:',
             'class:',
@@ -51,6 +52,11 @@ final class Application
 
         if (array_key_exists('help', $options)) {
             echo self::help();
+            exit(0);
+        }
+
+        if (array_key_exists('list-commands', $options)) {
+            echo self::supportedCommands();
             exit(0);
         }
 
@@ -174,6 +180,7 @@ Usage:
   php exec-cmds.php [options]
 
 Options:
+  --list-commands        Print supported command names and exit
   --count <int>          Total number of commands to execute. Default: 10000
   --keys <int>           Keyspace size per data type. Default: 1000
   --class <string>       relay or redis. Default: relay
@@ -200,5 +207,12 @@ Examples:
   --commands @read,!zrange
 
 TEXT;
+    }
+
+    private static function supportedCommands(): string
+    {
+        $names = (new \Mike\BenchUtils\CommandRegistry())->supportedCommandNames();
+
+        return "Supported commands:\n  " . implode("\n  ", $names) . "\n";
     }
 }
