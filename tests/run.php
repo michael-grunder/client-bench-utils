@@ -27,6 +27,23 @@ $tests['command groups resolve without duplicates'] = static function () use ($a
     $assert($names === ['get', 'hget', 'hgetall', 'lrange', 'smembers', 'zrange', 'zscore', 'hset', 'hmset'], 'Unexpected resolved command order.');
 };
 
+$tests['command exclusions can subtract from the default set'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $commands = $registry->resolve('!zrange');
+    $names = array_map(static fn ($command): string => $command->name, $commands);
+
+    $assert(!in_array('zrange', $names, true), 'Excluded command should not be present.');
+    $assert(count($names) === count($registry->definitions()) - 1, 'Default exclusion should start from @all.');
+};
+
+$tests['command exclusions can subtract included groups and aliases'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $commands = $registry->resolve('@read,~zrange,!zscore');
+    $names = array_map(static fn ($command): string => $command->name, $commands);
+
+    $assert($names === ['get', 'hget', 'hgetall', 'lrange', 'smembers'], 'Unexpected mixed include/exclude resolution.');
+};
+
 $tests['alias sampler favors heavier weight'] = static function () use ($assert): void {
     $sampler = new AliasSampler([1.0, 9.0]);
     $counts = [0, 0];
@@ -63,6 +80,7 @@ $tests['help output documents debug introspection flag'] = static function () us
     $help = $reflection->invoke(null);
 
     $assert(str_contains($help, '--debug-introspection'), 'Help output is missing the debug introspection flag.');
+    $assert(str_contains($help, '!name'), 'Help output should document command exclusion syntax.');
 };
 
 $tests['planner honors read heavy temperature'] = static function () use ($assert): void {

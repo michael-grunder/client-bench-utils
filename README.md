@@ -17,6 +17,16 @@ or:
 php bin/bench-command --keys 1000 --commands get,set,hgetall
 ```
 
+You can also subtract commands or groups from the selected set:
+
+```bash
+php bin/bench-command --commands !zrange
+php bin/bench-command --commands @read,!zrange
+```
+
+If a `--commands` list contains only exclusions, the benchmark starts from `@all`
+and removes those entries. Both `!name` and `~name` are accepted.
+
 The benchmark:
 
 - resolves command groups into an explicit command set

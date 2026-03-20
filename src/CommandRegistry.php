@@ -195,26 +195,79 @@ final class CommandRegistry
         }
 
         $definitions = $this->definitions();
-        $resolved = [];
+        $hasInclusiveSelector = false;
 
         foreach ($tokens as $token) {
-            $lower = strtolower($token);
+            if (!$this->isExclusionToken($token)) {
+                $hasInclusiveSelector = true;
+                break;
+            }
+        }
 
-            if (isset(self::GROUPS[$lower])) {
-                foreach (self::GROUPS[$lower] as $commandName) {
-                    $resolved[$commandName] = $definitions[$commandName];
+        $resolved = $hasInclusiveSelector
+            ? []
+            : $this->resolveGroup('@all', $definitions);
+
+        foreach ($tokens as $token) {
+            $isExclusion = $this->isExclusionToken($token);
+            $name = $isExclusion ? substr($token, 1) : $token;
+            $lower = strtolower($name);
+
+            $entries = str_starts_with($lower, '@')
+                ? $this->resolveGroup($lower, $definitions, $name)
+                : $this->resolveCommand($lower, $definitions, $name);
+
+            foreach ($entries as $commandName => $definition) {
+                if ($isExclusion) {
+                    unset($resolved[$commandName]);
+                    continue;
                 }
 
-                continue;
+                $resolved[$commandName] = $definition;
             }
+        }
 
-            if (!isset($definitions[$lower])) {
-                throw new \InvalidArgumentException(sprintf('Unknown command or group "%s".', $token));
-            }
-
-            $resolved[$lower] = $definitions[$lower];
+        if ($resolved === []) {
+            throw new \InvalidArgumentException('The command list resolved to zero commands.');
         }
 
         return array_values($resolved);
+    }
+
+    private function isExclusionToken(string $token): bool
+    {
+        return str_starts_with($token, '!') || str_starts_with($token, '~');
+    }
+
+    /**
+     * @param array<string, CommandDefinition> $definitions
+     * @return array<string, CommandDefinition>
+     */
+    private function resolveGroup(string $group, array $definitions, ?string $originalToken = null): array
+    {
+        if (!isset(self::GROUPS[$group])) {
+            throw new \InvalidArgumentException(sprintf('Unknown command or group "%s".', $originalToken ?? $group));
+        }
+
+        $resolved = [];
+
+        foreach (self::GROUPS[$group] as $commandName) {
+            $resolved[$commandName] = $definitions[$commandName];
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @param array<string, CommandDefinition> $definitions
+     * @return array<string, CommandDefinition>
+     */
+    private function resolveCommand(string $command, array $definitions, ?string $originalToken = null): array
+    {
+        if (!isset($definitions[$command])) {
+            throw new \InvalidArgumentException(sprintf('Unknown command or group "%s".', $originalToken ?? $command));
+        }
+
+        return [$command => $definitions[$command]];
     }
 }

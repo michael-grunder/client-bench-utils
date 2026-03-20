@@ -177,7 +177,7 @@ Options:
   --count <int>          Total number of commands to execute. Default: 10000
   --keys <int>           Keyspace size per data type. Default: 1000
   --class <string>       relay or redis. Default: relay
-  --commands <list>      Comma-separated commands and/or groups. Default: @all
+  --commands <list>      Comma-separated commands/groups; prefix entries with !name or ~name to exclude. Default: @all
   --debug-introspection  Print client reflection and failing call arguments
   --pipeline             Enable pipelining
   --multi                Enable MULTI/EXEC batching
@@ -193,6 +193,11 @@ Options:
 
 Groups:
   @all @read @write @string @hash @list @set @zset @numeric
+
+Examples:
+  --commands @read,@hash
+  --commands !zrange
+  --commands @read,!zrange
 
 TEXT;
     }
