@@ -1,9 +1,17 @@
 {
     "name": "mike/bench-utils",
+    "description": "Redis and Relay benchmark utilities",
+    "type": "project",
     "autoload": {
         "psr-4": {
             "Mike\\BenchUtils\\": "src/"
         }
+    },
+    "bin": [
+        "bin/bench-command"
+    ],
+    "scripts": {
+        "test": "php tests/run.php"
     },
     "authors": [
         {
