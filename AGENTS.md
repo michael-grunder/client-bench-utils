@@ -31,6 +31,7 @@ Code Style
 
 Dependencies & Abstractions
 ---------------------------
+- Use high quality composer packages over hand rolling functionality when appropriate.
 - Avoid unnecessary abstractions.
 - When wrapping external libraries, ensure the wrapper is explicit and does not
   obscure important behavior.
