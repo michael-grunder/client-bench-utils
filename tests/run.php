@@ -110,6 +110,69 @@ $tests['planner uses only available mode'] = static function () use ($assert): v
     }
 };
 
+$tests['summary prints runtime client class'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'printSummary');
+    $output = captureOutput(static fn () => $reflection->invoke($runner, 10, 1.5, ['get' => 10], 'Redis'));
+
+    $assert(str_contains($output, "Client class: Redis\n"), 'Summary should include the runtime client class.');
+};
+
+$tests['relay summary prints cache and memory stats'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'formatRelayStatsSummary');
+    [$cacheLine, $memoryLine] = $reflection->invoke($runner, [
+        'stats' => [
+            'hits' => 1234,
+            'requests' => 5000,
+        ],
+        'memory' => [
+            'used' => 123456,
+            'total' => 16776243,
+        ],
+    ]);
+
+    $assert($cacheLine === "Cache:       1,234 hits / 5,000 reqs\n", 'Relay summary should include formatted cache stats.');
+    $assert($memoryLine === "Memory:      123,456 / 16,776,243\n", 'Relay summary should include formatted memory stats.');
+};
+
+$tests['relay summary fails fast on missing stats fields'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'formatRelayStatsSummary');
+
+    try {
+        $reflection->invoke($runner, [
+        'stats' => [
+            'hits' => 1234,
+        ],
+        'memory' => [
+            'used' => 123456,
+            'total' => 16776243,
+        ],
+    ]);
+        $assert(false, 'Missing Relay stats fields should raise an error.');
+    } catch (RuntimeException $exception) {
+        $assert(str_contains($exception->getMessage(), 'Relay stat "stats.requests" is missing or invalid.'), 'Unexpected Relay stats validation error.');
+    }
+};
+
+/**
+ * @param callable(): void $callback
+ */
+function captureOutput(callable $callback): string
+{
+    ob_start();
+
+    try {
+        $callback();
+
+        return (string) ob_get_clean();
+    } catch (Throwable $exception) {
+        ob_end_clean();
+        throw $exception;
+    }
+}
+
 $failed = 0;
 
 foreach ($tests as $name => $test) {

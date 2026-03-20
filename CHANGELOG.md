@@ -10,6 +10,7 @@
 
 ### Changed
 - Expanded package metadata with a CLI binary and local test script.
+- Updated benchmark summaries to print the instantiated client class and include Relay cache/memory stats when running with Relay.
 
 ### Fixed
 

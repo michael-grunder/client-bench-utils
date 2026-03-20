@@ -27,6 +27,7 @@ final class BenchmarkRunner
         $operations = $this->planner->plan($commands, $config->count, $config->keys, $config->temperature, $config->maxKeySize);
         $keyspace = $this->buildKeyspace($commands, $config->keys);
         $client = $this->clientFactory->create($config);
+        $clientClass = get_class($client);
 
         if ($config->debugIntrospection) {
             $this->printClientIntrospection($client, $commands);
@@ -60,7 +61,7 @@ final class BenchmarkRunner
         }
 
         $elapsed = max(0.000001, microtime(true) - $startedAt);
-        $this->printSummary($executed, $elapsed, $breakdown);
+        $this->printSummary($executed, $elapsed, $breakdown, $clientClass);
 
         return 0;
     }
@@ -261,17 +262,69 @@ final class BenchmarkRunner
     /**
      * @param array<string, int> $breakdown
      */
-    private function printSummary(int $executed, float $elapsed, array $breakdown): void
+    private function printSummary(int $executed, float $elapsed, array $breakdown, string $clientClass): void
     {
         arsort($breakdown);
 
         echo sprintf("Executed: %d\n", $executed);
         echo sprintf("Elapsed: %0.6f sec\n", $elapsed);
         echo sprintf("Average throughput: %0.2f ops/sec\n", $executed / $elapsed);
+        echo sprintf("Client class: %s\n", $clientClass);
+        $this->printRelayStatsSummary($clientClass);
         echo "Breakdown:\n";
 
         foreach ($breakdown as $command => $count) {
             echo sprintf("  %-10s %d\n", $command, $count);
         }
+    }
+
+    private function printRelayStatsSummary(string $clientClass): void
+    {
+        if ($clientClass !== \Relay\Relay::class) {
+            return;
+        }
+
+        $stats = \Relay\Relay::stats();
+        [$cacheLine, $memoryLine] = $this->formatRelayStatsSummary($stats);
+
+        echo $cacheLine;
+        echo $memoryLine;
+    }
+
+    /**
+     * @param array<mixed> $stats
+     * @return array{string, string}
+     */
+    private function formatRelayStatsSummary(array $stats): array
+    {
+        $hits = $this->readRelayStat($stats, 'stats', 'hits');
+        $requests = $this->readRelayStat($stats, 'stats', 'requests');
+        $memoryUsed = $this->readRelayStat($stats, 'memory', 'used');
+        $memoryTotal = $this->readRelayStat($stats, 'memory', 'total');
+
+        return [
+            sprintf("Cache:       %s hits / %s reqs\n", number_format($hits), number_format($requests)),
+            sprintf("Memory:      %s / %s\n", number_format($memoryUsed), number_format($memoryTotal)),
+        ];
+    }
+
+    /**
+     * @param array<mixed> $stats
+     */
+    private function readRelayStat(array $stats, string $section, string $key): int
+    {
+        $sectionValue = $stats[$section] ?? null;
+
+        if (!is_array($sectionValue)) {
+            throw new \RuntimeException(sprintf('Relay stats section "%s" is missing or invalid.', $section));
+        }
+
+        $value = $sectionValue[$key] ?? null;
+
+        if (!is_int($value)) {
+            throw new \RuntimeException(sprintf('Relay stat "%s.%s" is missing or invalid.', $section, $key));
+        }
+
+        return $value;
     }
 }
