@@ -34,15 +34,16 @@ final class OperationPlanner
         $operations = [];
 
         for ($index = 0; $index < $count; $index++) {
-            $command = match ($modeSampler->sample($index, $this->threshold($index))) {
-                0 => $writes[$this->sampleIndex($writeSampler, $index + 7)],
-                default => $reads[$this->sampleIndex($readSampler, $index + 13)],
+            $modeSeed = $this->mixSeed($index, 0x13579bdf);
+            $command = match ($modeSampler->sample($modeSeed, $this->threshold($modeSeed))) {
+                0 => $writes[$this->sampleIndex($writeSampler, $this->mixSeed($index, 0x2468ace1))],
+                default => $reads[$this->sampleIndex($readSampler, $this->mixSeed($index, 0x10293847))],
             };
 
             $operations[] = new Operation(
                 $command,
-                $this->mixInt($index, $keys),
-                $this->mixInt($index + 31, max(1, $maxKeySize * 2)) + 1,
+                $this->mixInt($this->mixSeed($index, 0x55aa55aa), $keys),
+                $this->mixInt($this->mixSeed($index, 0x0f1e2d3c), max(1, $maxKeySize * 2)) + 1,
             );
         }
 
@@ -83,6 +84,11 @@ final class OperationPlanner
         $mixed = (($seed * 1103515245) + 12345) & 0x7fffffff;
 
         return $mixed / 0x7fffffff;
+    }
+
+    private function mixSeed(int $seed, int $salt): int
+    {
+        return (($seed ^ $salt) * 1103515245 + 12345) & 0x7fffffff;
     }
 
     private function mixInt(int $seed, int $modulus): int

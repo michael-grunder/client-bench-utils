@@ -240,6 +240,22 @@ $tests['planner uses only available mode'] = static function () use ($assert): v
     }
 };
 
+$tests['planner does not collapse mixed workloads to one command per mode'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $planner = new OperationPlanner();
+    $commands = $registry->resolve('get,set,mget,mset');
+    $operations = $planner->plan($commands, 400, 16, 0.5, 8);
+    $counts = [];
+
+    foreach ($operations as $operation) {
+        $counts[$operation->command->name] = ($counts[$operation->command->name] ?? 0) + 1;
+    }
+
+    foreach (['get', 'set', 'mget', 'mset'] as $name) {
+        $assert(($counts[$name] ?? 0) > 0, sprintf('Planner failed to schedule requested command "%s".', $name));
+    }
+};
+
 $tests['summary prints runtime client class'] = static function () use ($assert): void {
     $runner = new Mike\BenchUtils\BenchmarkRunner();
     $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'printSummary');

@@ -81,7 +81,7 @@ final class AliasSampler
 
     public function sample(int $column, float $threshold): int
     {
-        $index = $column % count($this->probabilities);
+        $index = $this->mixIndex($column);
 
         return $threshold < $this->probabilities[$index] ? $index : $this->aliases[$index];
     }
@@ -89,5 +89,12 @@ final class AliasSampler
     public function size(): int
     {
         return count($this->probabilities);
+    }
+
+    private function mixIndex(int $column): int
+    {
+        $mixed = crc32((string) $column);
+
+        return $mixed % count($this->probabilities);
     }
 }

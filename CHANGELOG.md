@@ -20,6 +20,7 @@
 - Updated benchmark execution to track command failures in the final summary instead of aborting on the first failing operation.
 
 ### Fixed
+- Fixed deterministic workload planning so mixed `--commands` selections no longer collapse to a single command per read/write mode.
 
 ### Deprecated
 
