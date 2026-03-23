@@ -6,6 +6,7 @@ namespace Mike\BenchUtils;
 
 enum CommandType: string
 {
+    case Connection = 'connection';
     case String = 'string';
     case Hash = 'hash';
     case List = 'list';

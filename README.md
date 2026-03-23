@@ -23,13 +23,15 @@ You can also subtract commands or groups from the selected set:
 php bin/bench-command --commands !zrange
 php bin/bench-command --commands @read,!zrange
 php bin/bench-command --commands @write,!@del
+php bin/bench-command --workers 4 --class redis --commands @read,@write
 ```
 
 If a `--commands` list contains only exclusions, the benchmark starts from `@all`
 and removes those entries. Both `!name` and `~name` are accepted.
 
-String workloads include both single-key and multi-key variants such as `get`,
-`mget`, `set`, and `mset`.
+String workloads include connection-level commands such as `ping` and `echo`,
+alongside single-key and multi-key variants such as `get`, `mget`, `set`, and
+`mset`.
 
 To print the implemented command names without running a benchmark:
 
@@ -43,6 +45,7 @@ The benchmark:
 - pre-generates keys, payload templates, and the operation plan
 - primes the required keyspace before measurement
 - optionally executes work in pipeline and/or MULTI batches
+- can fork concurrent workers with `--workers N`, with each worker creating its own client connection
 - keeps running when individual benchmark commands fail and reports those failures in the summary
 - can print method reflection and failing call arguments with `--debug-introspection`
 - reports periodic throughput updates and a final summary

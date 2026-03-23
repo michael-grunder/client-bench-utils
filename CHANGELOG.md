@@ -8,9 +8,11 @@
 - Added an opt-in benchmark introspection mode that prints client method signatures and failing command arguments for extension edge cases.
 - Added `--commands` exclusion selectors so benchmarks can subtract individual commands or groups with `!name` or `~name`.
 - Added a `--list-commands` utility flag to print the implemented benchmark command names without running a benchmark.
+- Added `ping` and `echo` benchmark commands for connection-scoped round-trip workloads.
 - Added `sismember`, `smismember`, `scard`, `strlen`, `zcard`, `llen`, `exists`, `del`, and `unlink` benchmark commands plus an `@del` selector group for explicit delete exclusions.
 - Added `mget` and `mset` benchmark commands for multi-key string workloads.
 - Added `--opt-ignore-numbers` to enable `Redis::OPT_PACK_IGNORE_NUMBERS` for numeric writes under serializer/compression workloads.
+- Added `--workers` to run benchmark workloads concurrently with `pcntl_fork`, with each worker creating its own client connection.
 
 ### Changed
 - Expanded package metadata with a CLI binary and local test script.

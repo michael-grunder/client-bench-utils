@@ -11,16 +11,16 @@ final class CommandRegistry
      */
     private const GROUPS = [
         '@all' => [
-            'get', 'mget', 'set', 'mset', 'strlen', 'exists', 'del', 'unlink', 'incr', 'decr',
+            'ping', 'echo', 'get', 'mget', 'set', 'mset', 'strlen', 'exists', 'del', 'unlink', 'incr', 'decr',
             'hset', 'hmset', 'hget', 'hgetall',
             'lpush', 'lrange', 'llen',
             'sadd', 'smembers', 'sismember', 'smismember', 'scard',
             'zadd', 'zrange', 'zscore', 'zcard',
         ],
-        '@read' => ['get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard'],
+        '@read' => ['ping', 'echo', 'get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard'],
         '@write' => ['set', 'mset', 'del', 'unlink', 'incr', 'decr', 'hset', 'hmset', 'lpush', 'sadd', 'zadd'],
         '@del' => ['del', 'unlink'],
-        '@string' => ['get', 'mget', 'set', 'mset', 'strlen', 'exists', 'del', 'unlink'],
+        '@string' => ['ping', 'echo', 'get', 'mget', 'set', 'mset', 'strlen', 'exists', 'del', 'unlink'],
         '@hash' => ['hset', 'hmset', 'hget', 'hgetall'],
         '@list' => ['lpush', 'lrange', 'llen'],
         '@set' => ['sadd', 'smembers', 'sismember', 'smismember', 'scard'],
@@ -34,6 +34,22 @@ final class CommandRegistry
     public function definitions(): array
     {
         return [
+            'ping' => new CommandDefinition(
+                'ping',
+                CommandMode::Read,
+                CommandType::Connection,
+                'ping',
+                static fn (string $key, PayloadFactory $payloads, int $variant, array $keyspace, int $keyIndex): array => [$payloads->string($variant)],
+                static fn (object $client, string $key, PayloadFactory $payloads): null => null
+            ),
+            'echo' => new CommandDefinition(
+                'echo',
+                CommandMode::Read,
+                CommandType::Connection,
+                'echo',
+                static fn (string $key, PayloadFactory $payloads, int $variant, array $keyspace, int $keyIndex): array => [$payloads->string($variant)],
+                static fn (object $client, string $key, PayloadFactory $payloads): null => null
+            ),
             'get' => new CommandDefinition(
                 'get',
                 CommandMode::Read,

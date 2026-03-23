@@ -30,6 +30,7 @@ final class Application
             'help',
             'list-commands',
             'count:',
+            'workers:',
             'keys:',
             'class:',
             'commands:',
@@ -62,6 +63,7 @@ final class Application
         }
 
         $count = self::positiveInt($options, 'count', 10000);
+        $workers = self::positiveInt($options, 'workers', 1);
         $keys = self::positiveInt($options, 'keys', 1000);
         $chunkSize = self::positiveInt($options, 'chunk-size', 1000);
         $maxKeySize = self::positiveInt($options, 'max-key-size', 16);
@@ -77,6 +79,7 @@ final class Application
 
         return new BenchmarkConfig(
             $count,
+            $workers,
             $keys,
             $class,
             $commands,
@@ -185,6 +188,7 @@ Usage:
 Options:
   --list-commands        Print supported command names and exit
   --count <int>          Total number of commands to execute. Default: 10000
+  --workers <int>        Number of concurrent worker processes. Default: 1
   --keys <int>           Keyspace size per data type. Default: 1000
   --class <string>       relay or redis. Default: relay
   --commands <list>      Comma-separated commands/groups; prefix entries with !name or ~name to exclude. Default: @all

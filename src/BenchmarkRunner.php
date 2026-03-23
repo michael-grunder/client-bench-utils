@@ -36,42 +36,22 @@ final class BenchmarkRunner
         }
 
         $this->primeKeyspace($client, $commands, $payloads, $keyspace);
+        unset($client);
 
         $startedAt = microtime(true);
-        $reporter = new ProgressReporter($startedAt);
-        $breakdown = array_fill_keys(array_map(static fn (CommandDefinition $command): string => $command->name, $commands), 0);
-        $failures = array_fill_keys(array_map(static fn (CommandDefinition $command): string => $command->name, $commands), 0);
-        $executed = 0;
-
-        if ($config->pipeline || $config->multi) {
-            foreach (array_chunk($operations, $config->chunkSize) as $chunk) {
-                foreach ($chunk as $operation) {
-                    $breakdown[$operation->command->name]++;
-                }
-
-                $chunkFailures = $this->executeChunk($client, $chunk, $payloads, $keyspace, $config);
-
-                foreach ($chunkFailures as $command => $count) {
-                    $failures[$command] += $count;
-                }
-
-                $executed += count($chunk);
-                $reporter->maybeReport($executed);
-            }
-        } else {
-            foreach ($operations as $operation) {
-                $breakdown[$operation->command->name]++;
-                if (!$this->executeOperation($client, $operation, $payloads, $keyspace)) {
-                    $failures[$operation->command->name]++;
-                }
-
-                $executed++;
-                $reporter->maybeReport($executed);
-            }
-        }
-
+        $result = $config->workers === 1
+            ? $this->runSingleWorker($config, $operations, $payloads, $keyspace, $commands)
+            : $this->runConcurrentWorkers($config, $operations, $payloads, $keyspace, $commands);
         $elapsed = max(0.000001, microtime(true) - $startedAt);
-        $this->printSummary($executed, $elapsed, $breakdown, $failures, $clientClass);
+
+        $this->printSummary(
+            $result['executed'],
+            $elapsed,
+            $result['breakdown'],
+            $result['failures'],
+            $clientClass,
+            $result['relayStats'],
+        );
 
         return 0;
     }
@@ -121,6 +101,346 @@ final class BenchmarkRunner
             }
 
             $initialized[$typeName] = true;
+        }
+    }
+
+    /**
+     * @param list<Operation> $operations
+     * @param list<CommandDefinition> $commands
+     * @param array<string, list<string>> $keyspace
+     * @return array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * }
+     */
+    private function runSingleWorker(
+        BenchmarkConfig $config,
+        array $operations,
+        PayloadFactory $payloads,
+        array $keyspace,
+        array $commands,
+    ): array {
+        $client = $this->clientFactory->create($config);
+
+        try {
+            return $this->executeOperations($client, $operations, $payloads, $keyspace, $config, $commands, true);
+        } finally {
+            unset($client);
+        }
+    }
+
+    /**
+     * @param list<Operation> $operations
+     * @param list<CommandDefinition> $commands
+     * @param array<string, list<string>> $keyspace
+     * @return array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * }
+     */
+    private function runConcurrentWorkers(
+        BenchmarkConfig $config,
+        array $operations,
+        PayloadFactory $payloads,
+        array $keyspace,
+        array $commands,
+    ): array {
+        if (!function_exists('pcntl_fork') || !function_exists('pcntl_waitpid')) {
+            throw new \RuntimeException('--workers requires the pcntl extension.');
+        }
+
+        $children = [];
+        $resultFiles = [];
+
+        foreach ($this->splitOperations($operations, $config->workers) as $workerIndex => $workerOperations) {
+            $resultFile = tempnam(sys_get_temp_dir(), 'bench-worker-');
+
+            if ($resultFile === false) {
+                throw new \RuntimeException('Failed to allocate a worker result file.');
+            }
+
+            $pid = pcntl_fork();
+
+            if ($pid === -1) {
+                @unlink($resultFile);
+                throw new \RuntimeException('Failed to fork benchmark worker.');
+            }
+
+            if ($pid === 0) {
+                $this->runWorkerChild($config, $workerOperations, $payloads, $keyspace, $commands, $resultFile);
+            }
+
+            $children[$pid] = $workerIndex;
+            $resultFiles[$workerIndex] = $resultFile;
+        }
+
+        $aggregate = $this->emptyResult($commands);
+
+        while ($children !== []) {
+            $status = 0;
+            $pid = pcntl_waitpid(-1, $status);
+
+            if ($pid === -1) {
+                throw new \RuntimeException('Failed while waiting for benchmark workers.');
+            }
+
+            $workerIndex = $children[$pid] ?? null;
+
+            if ($workerIndex === null) {
+                continue;
+            }
+
+            $resultFile = $resultFiles[$workerIndex];
+            unset($children[$pid], $resultFiles[$workerIndex]);
+
+            $aggregate = $this->mergeResults($aggregate, $this->readWorkerResult($resultFile, $workerIndex, $status));
+        }
+
+        return $aggregate;
+    }
+
+    /**
+     * @param list<Operation> $operations
+     * @param list<CommandDefinition> $commands
+     * @param array<string, list<string>> $keyspace
+     */
+    private function runWorkerChild(
+        BenchmarkConfig $config,
+        array $operations,
+        PayloadFactory $payloads,
+        array $keyspace,
+        array $commands,
+        string $resultFile,
+    ): never {
+        try {
+            $client = $this->clientFactory->create($config);
+
+            try {
+                $result = $this->executeOperations($client, $operations, $payloads, $keyspace, $config, $commands, false);
+            } finally {
+                unset($client);
+            }
+
+            $encoded = json_encode($result, JSON_THROW_ON_ERROR);
+
+            if (file_put_contents($resultFile, $encoded, LOCK_EX) === false) {
+                throw new \RuntimeException('Failed to write the worker result payload.');
+            }
+
+            exit(0);
+        } catch (\Throwable $exception) {
+            $payload = json_encode(['error' => $exception->getMessage()], JSON_THROW_ON_ERROR);
+            @file_put_contents($resultFile, $payload, LOCK_EX);
+            exit(1);
+        }
+    }
+
+    /**
+     * @param list<Operation> $operations
+     * @param list<CommandDefinition> $commands
+     * @param array<string, list<string>> $keyspace
+     * @return array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * }
+     */
+    private function executeOperations(
+        object $client,
+        array $operations,
+        PayloadFactory $payloads,
+        array $keyspace,
+        BenchmarkConfig $config,
+        array $commands,
+        bool $reportProgress,
+    ): array {
+        $reporter = $reportProgress ? new ProgressReporter(microtime(true)) : null;
+        $result = $this->emptyResult($commands);
+
+        if ($config->pipeline || $config->multi) {
+            foreach (array_chunk($operations, $config->chunkSize) as $chunk) {
+                foreach ($chunk as $operation) {
+                    $result['breakdown'][$operation->command->name]++;
+                }
+
+                $chunkFailures = $this->executeChunk($client, $chunk, $payloads, $keyspace, $config);
+
+                foreach ($chunkFailures as $command => $count) {
+                    $result['failures'][$command] += $count;
+                }
+
+                $result['executed'] += count($chunk);
+                $reporter?->maybeReport($result['executed']);
+            }
+        } else {
+            foreach ($operations as $operation) {
+                $result['breakdown'][$operation->command->name]++;
+
+                if (!$this->executeOperation($client, $operation, $payloads, $keyspace)) {
+                    $result['failures'][$operation->command->name]++;
+                }
+
+                $result['executed']++;
+                $reporter?->maybeReport($result['executed']);
+            }
+        }
+
+        if ($client::class === \Relay\Relay::class) {
+            $result['relayStats'] = \Relay\Relay::stats();
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param list<CommandDefinition> $commands
+     * @return array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * }
+     */
+    private function emptyResult(array $commands): array
+    {
+        $names = array_map(static fn (CommandDefinition $command): string => $command->name, $commands);
+
+        return [
+            'executed' => 0,
+            'breakdown' => array_fill_keys($names, 0),
+            'failures' => array_fill_keys($names, 0),
+            'relayStats' => null,
+        ];
+    }
+
+    /**
+     * @param list<Operation> $operations
+     * @return list<list<Operation>>
+     */
+    private function splitOperations(array $operations, int $workers): array
+    {
+        $chunks = array_fill(0, $workers, []);
+
+        foreach ($operations as $index => $operation) {
+            $chunks[$index % $workers][] = $operation;
+        }
+
+        return array_values(array_filter($chunks, static fn (array $chunk): bool => $chunk !== []));
+    }
+
+    /**
+     * @param array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * } $left
+     * @param array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * } $right
+     * @return array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * }
+     */
+    private function mergeResults(array $left, array $right): array
+    {
+        $left['executed'] += $right['executed'];
+
+        foreach ($right['breakdown'] as $command => $count) {
+            $left['breakdown'][$command] += $count;
+        }
+
+        foreach ($right['failures'] as $command => $count) {
+            $left['failures'][$command] += $count;
+        }
+
+        if ($right['relayStats'] !== null) {
+            $left['relayStats'] = $left['relayStats'] === null
+                ? $right['relayStats']
+                : $this->mergeRelayStats($left['relayStats'], $right['relayStats']);
+        }
+
+        return $left;
+    }
+
+    /**
+     * @param array<mixed> $left
+     * @param array<mixed> $right
+     * @return array<mixed>
+     */
+    private function mergeRelayStats(array $left, array $right): array
+    {
+        foreach ($right as $section => $sectionValue) {
+            if (!is_array($sectionValue)) {
+                continue;
+            }
+
+            $leftSection = $left[$section] ?? [];
+
+            if (!is_array($leftSection)) {
+                $leftSection = [];
+            }
+
+            foreach ($sectionValue as $key => $value) {
+                if (!is_int($value)) {
+                    continue;
+                }
+
+                $leftSection[$key] = (int) ($leftSection[$key] ?? 0) + $value;
+            }
+
+            $left[$section] = $leftSection;
+        }
+
+        return $left;
+    }
+
+    /**
+     * @return array{
+     *   executed: int,
+     *   breakdown: array<string, int>,
+     *   failures: array<string, int>,
+     *   relayStats: ?array<mixed>
+     * }
+     */
+    private function readWorkerResult(string $resultFile, int $workerIndex, int $status): array
+    {
+        try {
+            $contents = file_get_contents($resultFile);
+
+            if ($contents === false || $contents === '') {
+                throw new \RuntimeException(sprintf('Worker %d did not produce a result payload.', $workerIndex));
+            }
+
+            /** @var mixed $decoded */
+            $decoded = json_decode($contents, true, flags: JSON_THROW_ON_ERROR);
+
+            if (!is_array($decoded)) {
+                throw new \RuntimeException(sprintf('Worker %d returned an invalid result payload.', $workerIndex));
+            }
+
+            if (isset($decoded['error']) && is_string($decoded['error'])) {
+                throw new \RuntimeException(sprintf('Worker %d failed: %s', $workerIndex, $decoded['error']));
+            }
+
+            if (!pcntl_wifexited($status) || pcntl_wexitstatus($status) !== 0) {
+                throw new \RuntimeException(sprintf('Worker %d exited abnormally.', $workerIndex));
+            }
+
+            return $decoded;
+        } finally {
+            @unlink($resultFile);
         }
     }
 
@@ -340,9 +660,16 @@ final class BenchmarkRunner
     /**
      * @param array<string, int> $breakdown
      * @param array<string, int> $failures
+     * @param ?array<mixed> $relayStats
      */
-    private function printSummary(int $executed, float $elapsed, array $breakdown, array $failures, string $clientClass): void
-    {
+    private function printSummary(
+        int $executed,
+        float $elapsed,
+        array $breakdown,
+        array $failures,
+        string $clientClass,
+        ?array $relayStats = null,
+    ): void {
         arsort($breakdown);
         arsort($failures);
         $failed = array_sum($failures);
@@ -353,7 +680,7 @@ final class BenchmarkRunner
         echo sprintf("Elapsed: %0.6f sec\n", $elapsed);
         echo sprintf("Average throughput: %0.2f ops/sec\n", $executed / $elapsed);
         echo sprintf("Client class: %s\n", $clientClass);
-        $this->printRelayStatsSummary($clientClass);
+        $this->printRelayStatsSummary($clientClass, $relayStats);
         echo "Breakdown:\n";
 
         foreach ($breakdown as $command => $count) {
@@ -375,13 +702,16 @@ final class BenchmarkRunner
         }
     }
 
-    private function printRelayStatsSummary(string $clientClass): void
+    /**
+     * @param ?array<mixed> $stats
+     */
+    private function printRelayStatsSummary(string $clientClass, ?array $stats = null): void
     {
         if ($clientClass !== \Relay\Relay::class) {
             return;
         }
 
-        $stats = \Relay\Relay::stats();
+        $stats ??= \Relay\Relay::stats();
         [$cacheLine, $memoryLine] = $this->formatRelayStatsSummary($stats);
 
         echo $cacheLine;

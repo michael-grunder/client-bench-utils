@@ -41,7 +41,7 @@ $tests['command groups resolve without duplicates'] = static function () use ($a
     $commands = $registry->resolve('@read,@hash,get');
     $names = array_map(static fn ($command): string => $command->name, $commands);
 
-    $assert($names === ['get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard', 'hset', 'hmset'], 'Unexpected resolved command order.');
+    $assert($names === ['ping', 'echo', 'get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard', 'hset', 'hmset'], 'Unexpected resolved command order.');
 };
 
 $tests['command exclusions can subtract from the default set'] = static function () use ($assert): void {
@@ -58,7 +58,7 @@ $tests['command exclusions can subtract included groups and aliases'] = static f
     $commands = $registry->resolve('@read,~zrange,!zscore');
     $names = array_map(static fn ($command): string => $command->name, $commands);
 
-    $assert($names === ['get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zcard'], 'Unexpected mixed include/exclude resolution.');
+    $assert($names === ['ping', 'echo', 'get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zcard'], 'Unexpected mixed include/exclude resolution.');
 };
 
 $tests['delete group resolves both delete commands'] = static function () use ($assert): void {
@@ -143,12 +143,60 @@ $tests['mset command builds a key value map for the selected keys'] = static fun
     $assert($arguments[0]['string:2'] === $payloads->string(2), 'mset should assign deterministic payloads to the second key.');
 };
 
+$tests['ping and echo commands use connection-scoped payload arguments'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+
+    $ping = $registry->resolve('ping')[0];
+    $echo = $registry->resolve('echo')[0];
+
+    $pingArguments = $ping->buildArguments('connection:0', $payloads, 5);
+    $echoArguments = $echo->buildArguments('connection:0', $payloads, 3);
+
+    $assert($ping->type->value === 'connection', 'ping should use a dedicated connection command type.');
+    $assert($echo->type->value === 'connection', 'echo should use a dedicated connection command type.');
+    $assert($pingArguments === [$payloads->string(5)], 'ping should send a payload string argument.');
+    $assert($echoArguments === [$payloads->string(3)], 'echo should send a payload string argument.');
+};
+
+$tests['connection command priming does not replace string key initialization'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'primeKeyspace');
+    $reflection->setAccessible(true);
+
+    $client = new class () {
+        /** @var list<array{string, mixed}> */
+        public array $calls = [];
+
+        public function set(string $key, mixed $value): bool
+        {
+            $this->calls[] = [$key, $value];
+
+            return true;
+        }
+    };
+
+    $commands = $registry->resolve('ping,get');
+    $keyspace = [
+        'connection' => ['connection:0'],
+        'string' => ['string:0'],
+    ];
+
+    $reflection->invoke($runner, $client, $commands, $payloads, $keyspace);
+
+    $assert(count($client->calls) === 1, 'Only the string command should prime the keyspace.');
+    $assert($client->calls[0][0] === 'string:0', 'String command priming should still target the string keyspace.');
+};
+
 $tests['help output documents debug introspection flag'] = static function () use ($assert): void {
     $reflection = new ReflectionMethod(Application::class, 'help');
     $help = $reflection->invoke(null);
 
     $assert(str_contains($help, '--debug-introspection'), 'Help output is missing the debug introspection flag.');
     $assert(str_contains($help, '--list-commands'), 'Help output is missing the supported commands flag.');
+    $assert(str_contains($help, '--workers'), 'Help output is missing the workers flag.');
     $assert(str_contains($help, '--opt-ignore-numbers'), 'Help output is missing the numeric packing toggle.');
     $assert(str_contains($help, '!name'), 'Help output should document command exclusion syntax.');
 };
@@ -277,6 +325,7 @@ $tests['execute chunk aggregates queued failures by command'] = static function 
         new Mike\BenchUtils\BenchmarkConfig(
             2,
             1,
+            1,
             'redis',
             'incr,get',
             false,
@@ -315,6 +364,7 @@ $tests['client factory enables opt-ignore-numbers'] = static function () use ($a
         $factory,
         $client,
         new Mike\BenchUtils\BenchmarkConfig(
+            1,
             1,
             1,
             'redis',
@@ -373,6 +423,57 @@ $tests['relay summary fails fast on missing stats fields'] = static function () 
     } catch (RuntimeException $exception) {
         $assert(str_contains($exception->getMessage(), 'Relay stat "stats.requests" is missing or invalid.'), 'Unexpected Relay stats validation error.');
     }
+};
+
+$tests['split operations distributes work round robin across workers'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $registry = new CommandRegistry();
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'splitOperations');
+    $reflection->setAccessible(true);
+    $operations = [
+        new Mike\BenchUtils\Operation($registry->resolve('get')[0], 0, 1),
+        new Mike\BenchUtils\Operation($registry->resolve('set')[0], 1, 2),
+        new Mike\BenchUtils\Operation($registry->resolve('incr')[0], 2, 3),
+        new Mike\BenchUtils\Operation($registry->resolve('get')[0], 3, 4),
+        new Mike\BenchUtils\Operation($registry->resolve('set')[0], 4, 5),
+    ];
+
+    $chunks = $reflection->invoke($runner, $operations, 3);
+
+    $assert(count($chunks) === 3, 'splitOperations should create one non-empty chunk per worker.');
+    $assert($chunks[0][0] === $operations[0] && $chunks[0][1] === $operations[3], 'Worker 0 should receive every third operation starting at index 0.');
+    $assert($chunks[1][0] === $operations[1] && $chunks[1][1] === $operations[4], 'Worker 1 should receive every third operation starting at index 1.');
+    $assert($chunks[2][0] === $operations[2], 'Worker 2 should receive every third operation starting at index 2.');
+};
+
+$tests['merge results combines counts and relay stats'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'mergeResults');
+    $reflection->setAccessible(true);
+
+    $merged = $reflection->invoke($runner, [
+        'executed' => 4,
+        'breakdown' => ['get' => 3, 'set' => 1],
+        'failures' => ['get' => 0, 'set' => 1],
+        'relayStats' => [
+            'stats' => ['hits' => 10, 'requests' => 20],
+            'memory' => ['used' => 30, 'total' => 40],
+        ],
+    ], [
+        'executed' => 5,
+        'breakdown' => ['get' => 2, 'set' => 3],
+        'failures' => ['get' => 1, 'set' => 0],
+        'relayStats' => [
+            'stats' => ['hits' => 1, 'requests' => 2],
+            'memory' => ['used' => 3, 'total' => 4],
+        ],
+    ]);
+
+    $assert($merged['executed'] === 9, 'mergeResults should sum executed operations.');
+    $assert($merged['breakdown'] === ['get' => 5, 'set' => 4], 'mergeResults should sum per-command breakdowns.');
+    $assert($merged['failures'] === ['get' => 1, 'set' => 1], 'mergeResults should sum per-command failures.');
+    $assert($merged['relayStats']['stats']['hits'] === 11, 'mergeResults should sum Relay hit counters.');
+    $assert($merged['relayStats']['memory']['total'] === 44, 'mergeResults should sum Relay memory counters.');
 };
 
 /**

@@ -8,6 +8,7 @@ final readonly class BenchmarkConfig
 {
     public function __construct(
         public int $count,
+        public int $workers,
         public int $keys,
         public string $class,
         public string $commands,
