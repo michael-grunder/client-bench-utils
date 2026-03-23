@@ -39,6 +39,7 @@ final class Application
             'chunk-size:',
             'serializer:',
             'compression:',
+            'opt-ignore-numbers',
             'max-key-size:',
             'prefix:',
             'temperature:',
@@ -67,6 +68,7 @@ final class Application
         $class = self::enumValue($options, 'class', ['relay', 'redis'], 'relay');
         $serializer = self::nullableEnumValue($options, 'serializer', ['php', 'json', 'igbinary', 'msgpack']);
         $compression = self::nullableEnumValue($options, 'compression', ['zstd', 'lzf', 'lz4']);
+        $optIgnoreNumbers = array_key_exists('opt-ignore-numbers', $options);
         $temperature = self::floatRange($options, 'temperature', 0.5, 0.0, 1.0);
         $commands = self::stringValue($options, 'commands', '@all');
         $prefix = (string) ($options['prefix'] ?? '');
@@ -84,6 +86,7 @@ final class Application
             $chunkSize,
             $serializer,
             $compression,
+            $optIgnoreNumbers,
             $maxKeySize,
             $prefix,
             $temperature,
@@ -191,6 +194,7 @@ Options:
   --chunk-size <int>     Commands per batch when pipeline and/or multi is enabled. Default: 1000
   --serializer <string>  php, json, igbinary, msgpack
   --compression <string> zstd, lzf, lz4
+  --opt-ignore-numbers   Skip packing numbers with Redis::OPT_PACK_IGNORE_NUMBERS
   --max-key-size <int>   Payload complexity knob. Default: 16
   --prefix <string>      Redis key prefix
   --temperature <float>  Read bias between 0.0 and 1.0. Default: 0.5

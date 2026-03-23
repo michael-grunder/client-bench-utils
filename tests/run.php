@@ -4,6 +4,23 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/bootstrap.php';
 
+if (!class_exists('Redis', false)) {
+    class Redis
+    {
+        public const OPT_PREFIX = 1;
+        public const OPT_SERIALIZER = 2;
+        public const OPT_COMPRESSION = 3;
+        public const OPT_PACK_IGNORE_NUMBERS = 4;
+        public const SERIALIZER_PHP = 10;
+        public const SERIALIZER_JSON = 11;
+        public const SERIALIZER_IGBINARY = 12;
+        public const SERIALIZER_MSGPACK = 13;
+        public const COMPRESSION_ZSTD = 20;
+        public const COMPRESSION_LZF = 21;
+        public const COMPRESSION_LZ4 = 22;
+    }
+}
+
 use Mike\BenchUtils\AliasSampler;
 use Mike\BenchUtils\CommandRegistry;
 use Mike\BenchUtils\CommandMode;
@@ -132,6 +149,7 @@ $tests['help output documents debug introspection flag'] = static function () us
 
     $assert(str_contains($help, '--debug-introspection'), 'Help output is missing the debug introspection flag.');
     $assert(str_contains($help, '--list-commands'), 'Help output is missing the supported commands flag.');
+    $assert(str_contains($help, '--opt-ignore-numbers'), 'Help output is missing the numeric packing toggle.');
     $assert(str_contains($help, '!name'), 'Help output should document command exclusion syntax.');
 };
 
@@ -177,9 +195,146 @@ $tests['planner uses only available mode'] = static function () use ($assert): v
 $tests['summary prints runtime client class'] = static function () use ($assert): void {
     $runner = new Mike\BenchUtils\BenchmarkRunner();
     $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'printSummary');
-    $output = captureOutput(static fn () => $reflection->invoke($runner, 10, 1.5, ['get' => 10], 'Redis'));
+    $output = captureOutput(static fn () => $reflection->invoke($runner, 10, 1.5, ['get' => 10], ['get' => 0], 'Redis'));
 
     $assert(str_contains($output, "Client class: Redis\n"), 'Summary should include the runtime client class.');
+    $assert(str_contains($output, "Failed: 0\n"), 'Summary should include the total failure count.');
+};
+
+$tests['summary prints failure breakdown when present'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'printSummary');
+    $output = captureOutput(static fn () => $reflection->invoke($runner, 10, 1.5, ['incr' => 6, 'get' => 4], ['incr' => 2, 'get' => 0], 'Redis'));
+
+    $assert(str_contains($output, "Succeeded: 8\n"), 'Summary should include succeeded operations.');
+    $assert(str_contains($output, "Failures:\n  incr"), 'Summary should print a non-zero failure breakdown.');
+};
+
+$tests['execute operation tracks write failures without throwing'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'executeOperation');
+    $reflection->setAccessible(true);
+    $client = new class () {
+        public function incr(string $key): bool
+        {
+            return false;
+        }
+    };
+
+    $result = $reflection->invoke(
+        $runner,
+        $client,
+        new Mike\BenchUtils\Operation($registry->resolve('incr')[0], 0, 1),
+        $payloads,
+        ['int' => ['int:0']],
+    );
+
+    $assert($result === false, 'executeOperation should report write failures as false.');
+};
+
+$tests['execute chunk aggregates queued failures by command'] = static function () use ($assert): void {
+    $runner = new Mike\BenchUtils\BenchmarkRunner();
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $reflection = new ReflectionMethod(Mike\BenchUtils\BenchmarkRunner::class, 'executeChunk');
+    $reflection->setAccessible(true);
+    $client = new class () {
+        public function pipeline(): self
+        {
+            return $this;
+        }
+
+        public function incr(string $key): self
+        {
+            return $this;
+        }
+
+        public function get(string $key): self
+        {
+            return $this;
+        }
+
+        public function exec(): array
+        {
+            return [false, false];
+        }
+    };
+
+    $failures = $reflection->invoke(
+        $runner,
+        $client,
+        [
+            new Mike\BenchUtils\Operation($registry->resolve('incr')[0], 0, 1),
+            new Mike\BenchUtils\Operation($registry->resolve('get')[0], 0, 1),
+        ],
+        $payloads,
+        [
+            'int' => ['int:0'],
+            'string' => ['string:0'],
+        ],
+        new Mike\BenchUtils\BenchmarkConfig(
+            2,
+            1,
+            'redis',
+            'incr,get',
+            false,
+            true,
+            false,
+            2,
+            null,
+            null,
+            false,
+            8,
+            '',
+            0.5,
+            '127.0.0.1',
+            6379,
+        ),
+    );
+
+    $assert($failures === ['incr' => 1], 'executeChunk should count failed queued replies and ignore allowed false reads.');
+};
+
+$tests['client factory enables opt-ignore-numbers'] = static function () use ($assert): void {
+    $factory = new Mike\BenchUtils\ClientFactory();
+    $client = new class () {
+        /** @var array<int|string, mixed> */
+        public array $options = [];
+
+        public function setOption(int $option, mixed $value): void
+        {
+            $this->options[$option] = $value;
+        }
+    };
+    $reflection = new ReflectionMethod(Mike\BenchUtils\ClientFactory::class, 'applyOptions');
+    $reflection->setAccessible(true);
+
+    $reflection->invoke(
+        $factory,
+        $client,
+        new Mike\BenchUtils\BenchmarkConfig(
+            1,
+            1,
+            'redis',
+            '@all',
+            false,
+            false,
+            false,
+            1,
+            null,
+            null,
+            true,
+            1,
+            '',
+            0.5,
+            '127.0.0.1',
+            6379,
+        ),
+    );
+
+    $assert(($client->options[Redis::OPT_PACK_IGNORE_NUMBERS] ?? null) === true, 'Client factory should enable OPT_PACK_IGNORE_NUMBERS when requested.');
 };
 
 $tests['relay summary prints cache and memory stats'] = static function () use ($assert): void {

@@ -17,6 +17,7 @@ final readonly class BenchmarkConfig
         public int $chunkSize,
         public ?string $serializer,
         public ?string $compression,
+        public bool $optIgnoreNumbers,
         public int $maxKeySize,
         public string $prefix,
         public float $temperature,

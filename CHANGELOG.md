@@ -10,10 +10,12 @@
 - Added a `--list-commands` utility flag to print the implemented benchmark command names without running a benchmark.
 - Added `sismember`, `smismember`, `scard`, `strlen`, `zcard`, `llen`, `exists`, `del`, and `unlink` benchmark commands plus an `@del` selector group for explicit delete exclusions.
 - Added `mget` and `mset` benchmark commands for multi-key string workloads.
+- Added `--opt-ignore-numbers` to enable `Redis::OPT_PACK_IGNORE_NUMBERS` for numeric writes under serializer/compression workloads.
 
 ### Changed
 - Expanded package metadata with a CLI binary and local test script.
 - Updated benchmark summaries to print the instantiated client class and include Relay cache/memory stats when running with Relay.
+- Updated benchmark execution to track command failures in the final summary instead of aborting on the first failing operation.
 
 ### Fixed
 

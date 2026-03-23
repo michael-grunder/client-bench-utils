@@ -6,6 +6,8 @@ namespace Mike\BenchUtils;
 
 final class BenchmarkRunner
 {
+    private const FALSE_ALLOWED_COMMANDS = ['get', 'hget', 'zscore'];
+
     private ClientFactory $clientFactory;
     private CommandRegistry $registry;
     private OperationPlanner $planner;
@@ -38,14 +40,19 @@ final class BenchmarkRunner
         $startedAt = microtime(true);
         $reporter = new ProgressReporter($startedAt);
         $breakdown = array_fill_keys(array_map(static fn (CommandDefinition $command): string => $command->name, $commands), 0);
+        $failures = array_fill_keys(array_map(static fn (CommandDefinition $command): string => $command->name, $commands), 0);
         $executed = 0;
 
         if ($config->pipeline || $config->multi) {
             foreach (array_chunk($operations, $config->chunkSize) as $chunk) {
-                $this->executeChunk($client, $chunk, $payloads, $keyspace, $config);
-
                 foreach ($chunk as $operation) {
                     $breakdown[$operation->command->name]++;
+                }
+
+                $chunkFailures = $this->executeChunk($client, $chunk, $payloads, $keyspace, $config);
+
+                foreach ($chunkFailures as $command => $count) {
+                    $failures[$command] += $count;
                 }
 
                 $executed += count($chunk);
@@ -53,15 +60,18 @@ final class BenchmarkRunner
             }
         } else {
             foreach ($operations as $operation) {
-                $this->executeOperation($client, $operation, $payloads, $keyspace);
                 $breakdown[$operation->command->name]++;
+                if (!$this->executeOperation($client, $operation, $payloads, $keyspace)) {
+                    $failures[$operation->command->name]++;
+                }
+
                 $executed++;
                 $reporter->maybeReport($executed);
             }
         }
 
         $elapsed = max(0.000001, microtime(true) - $startedAt);
-        $this->printSummary($executed, $elapsed, $breakdown, $clientClass);
+        $this->printSummary($executed, $elapsed, $breakdown, $failures, $clientClass);
 
         return 0;
     }
@@ -117,8 +127,9 @@ final class BenchmarkRunner
     /**
      * @param list<Operation> $chunk
      * @param array<string, list<string>> $keyspace
+     * @return array<string, int>
      */
-    private function executeChunk(object $client, array $chunk, PayloadFactory $payloads, array $keyspace, BenchmarkConfig $config): void
+    private function executeChunk(object $client, array $chunk, PayloadFactory $payloads, array $keyspace, BenchmarkConfig $config): array
     {
         $target = $client;
 
@@ -130,21 +141,52 @@ final class BenchmarkRunner
             $target = $target->multi();
         }
 
-        foreach ($chunk as $operation) {
-            $this->executeOperation($target, $operation, $payloads, $keyspace);
+        $queuedOperations = [];
+        $failures = [];
+
+        foreach ($chunk as $index => $operation) {
+            if ($this->queueOperation($target, $operation, $payloads, $keyspace)) {
+                $queuedOperations[] = [$index, $operation];
+                continue;
+            }
+
+            $failures[$operation->command->name] = ($failures[$operation->command->name] ?? 0) + 1;
+        }
+
+        if ($queuedOperations === []) {
+            return $failures;
         }
 
         $result = $target->exec();
 
         if ($result === false) {
-            throw new \RuntimeException('Failed to execute pipeline or MULTI batch.');
+            foreach ($queuedOperations as [, $operation]) {
+                $failures[$operation->command->name] = ($failures[$operation->command->name] ?? 0) + 1;
+            }
+
+            return $failures;
         }
+
+        if (!is_array($result)) {
+            throw new \RuntimeException('Pipeline or MULTI batch returned an unexpected result.');
+        }
+
+        foreach ($queuedOperations as $position => [, $operation]) {
+            $replyPresent = array_key_exists($position, $result);
+            $reply = $replyPresent ? $result[$position] : null;
+
+            if ($this->didOperationFail($operation->command, $reply, $replyPresent)) {
+                $failures[$operation->command->name] = ($failures[$operation->command->name] ?? 0) + 1;
+            }
+        }
+
+        return $failures;
     }
 
     /**
      * @param array<string, list<string>> $keyspace
      */
-    private function executeOperation(object $client, Operation $operation, PayloadFactory $payloads, array $keyspace): void
+    private function executeOperation(object $client, Operation $operation, PayloadFactory $payloads, array $keyspace): bool
     {
         $typeKeyspace = $keyspace[$operation->command->type->value];
         $key = $typeKeyspace[$operation->keyIndex];
@@ -155,12 +197,47 @@ final class BenchmarkRunner
         } catch (\Throwable $exception) {
             $this->printOperationFailureDetails($client, $operation, $key, $arguments, $exception);
 
-            throw $exception;
+            return false;
         }
 
-        if ($result === false && $operation->command->name !== 'get' && $operation->command->name !== 'hget' && $operation->command->name !== 'zscore') {
-            throw new \RuntimeException(sprintf('Command "%s" failed for key "%s".', $operation->command->name, $key));
+        if ($this->didOperationFail($operation->command, $result)) {
+            return false;
         }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, list<string>> $keyspace
+     */
+    private function queueOperation(object $client, Operation $operation, PayloadFactory $payloads, array $keyspace): bool
+    {
+        $typeKeyspace = $keyspace[$operation->command->type->value];
+        $key = $typeKeyspace[$operation->keyIndex];
+        $arguments = $operation->command->buildArguments($key, $payloads, $operation->variant, $typeKeyspace, $operation->keyIndex);
+
+        try {
+            $client->{$operation->command->clientMethod}(...$arguments);
+        } catch (\Throwable $exception) {
+            $this->printOperationFailureDetails($client, $operation, $key, $arguments, $exception);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private function didOperationFail(CommandDefinition $command, mixed $result, bool $resultPresent = true): bool
+    {
+        if (!$resultPresent) {
+            return true;
+        }
+
+        if ($result instanceof \Throwable) {
+            return true;
+        }
+
+        return $result === false && !in_array($command->name, self::FALSE_ALLOWED_COMMANDS, true);
     }
 
     /**
@@ -262,12 +339,17 @@ final class BenchmarkRunner
 
     /**
      * @param array<string, int> $breakdown
+     * @param array<string, int> $failures
      */
-    private function printSummary(int $executed, float $elapsed, array $breakdown, string $clientClass): void
+    private function printSummary(int $executed, float $elapsed, array $breakdown, array $failures, string $clientClass): void
     {
         arsort($breakdown);
+        arsort($failures);
+        $failed = array_sum($failures);
 
         echo sprintf("Executed: %d\n", $executed);
+        echo sprintf("Succeeded: %d\n", $executed - $failed);
+        echo sprintf("Failed: %d\n", $failed);
         echo sprintf("Elapsed: %0.6f sec\n", $elapsed);
         echo sprintf("Average throughput: %0.2f ops/sec\n", $executed / $elapsed);
         echo sprintf("Client class: %s\n", $clientClass);
@@ -275,6 +357,20 @@ final class BenchmarkRunner
         echo "Breakdown:\n";
 
         foreach ($breakdown as $command => $count) {
+            echo sprintf("  %-10s %d\n", $command, $count);
+        }
+
+        if ($failed === 0) {
+            return;
+        }
+
+        echo "Failures:\n";
+
+        foreach ($failures as $command => $count) {
+            if ($count === 0) {
+                continue;
+            }
+
             echo sprintf("  %-10s %d\n", $command, $count);
         }
     }

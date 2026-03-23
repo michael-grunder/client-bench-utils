@@ -43,8 +43,13 @@ The benchmark:
 - pre-generates keys, payload templates, and the operation plan
 - primes the required keyspace before measurement
 - optionally executes work in pipeline and/or MULTI batches
+- keeps running when individual benchmark commands fail and reports those failures in the summary
 - can print method reflection and failing call arguments with `--debug-introspection`
 - reports periodic throughput updates and a final summary
+
+When benchmarking with serializers or compression enabled, `--opt-ignore-numbers`
+sets `Redis::OPT_PACK_IGNORE_NUMBERS` so integer and float values are sent
+without packing. This is useful for numeric commands such as `incr` and `decr`.
 
 Available groups include `@all`, `@read`, `@write`, `@del`, `@string`,
 `@hash`, `@list`, `@set`, `@zset`, and `@numeric`.

@@ -66,6 +66,10 @@ final class ClientFactory
         if ($config->compression !== null) {
             $client->setOption($this->redisConst('OPT_COMPRESSION'), $this->compressionOption($config->compression));
         }
+
+        if ($config->optIgnoreNumbers) {
+            $client->setOption($this->redisConst('OPT_PACK_IGNORE_NUMBERS'), true);
+        }
     }
 
     private function serializerOption(string $serializer): int
