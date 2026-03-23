@@ -7,7 +7,7 @@ namespace Mike\BenchUtils;
 final readonly class CommandDefinition
 {
     /**
-     * @param \Closure(string, PayloadFactory, int): list<mixed> $argumentBuilder
+     * @param \Closure(string, PayloadFactory, int, list<string>, int): list<mixed> $argumentBuilder
      * @param \Closure(object, string, PayloadFactory): mixed $initializer
      */
     public function __construct(
@@ -28,9 +28,9 @@ final readonly class CommandDefinition
     /**
      * @return list<mixed>
      */
-    public function buildArguments(string $key, PayloadFactory $payloads, int $variant): array
+    public function buildArguments(string $key, PayloadFactory $payloads, int $variant, array $keyspace = [], int $keyIndex = 0): array
     {
-        return ($this->argumentBuilder)($key, $payloads, $variant);
+        return ($this->argumentBuilder)($key, $payloads, $variant, $keyspace, $keyIndex);
     }
 
     public function initialize(object $client, string $key, PayloadFactory $payloads): mixed

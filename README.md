@@ -28,6 +28,9 @@ php bin/bench-command --commands @write,!@del
 If a `--commands` list contains only exclusions, the benchmark starts from `@all`
 and removes those entries. Both `!name` and `~name` are accepted.
 
+String workloads include both single-key and multi-key variants such as `get`,
+`mget`, `set`, and `mset`.
+
 To print the implemented command names without running a benchmark:
 
 ```bash

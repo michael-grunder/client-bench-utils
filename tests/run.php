@@ -24,7 +24,7 @@ $tests['command groups resolve without duplicates'] = static function () use ($a
     $commands = $registry->resolve('@read,@hash,get');
     $names = array_map(static fn ($command): string => $command->name, $commands);
 
-    $assert($names === ['get', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard', 'hset', 'hmset'], 'Unexpected resolved command order.');
+    $assert($names === ['get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zrange', 'zscore', 'zcard', 'hset', 'hmset'], 'Unexpected resolved command order.');
 };
 
 $tests['command exclusions can subtract from the default set'] = static function () use ($assert): void {
@@ -41,7 +41,7 @@ $tests['command exclusions can subtract included groups and aliases'] = static f
     $commands = $registry->resolve('@read,~zrange,!zscore');
     $names = array_map(static fn ($command): string => $command->name, $commands);
 
-    $assert($names === ['get', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zcard'], 'Unexpected mixed include/exclude resolution.');
+    $assert($names === ['get', 'mget', 'strlen', 'exists', 'hget', 'hgetall', 'lrange', 'llen', 'smembers', 'sismember', 'smismember', 'scard', 'zcard'], 'Unexpected mixed include/exclude resolution.');
 };
 
 $tests['delete group resolves both delete commands'] = static function () use ($assert): void {
@@ -100,6 +100,30 @@ $tests['smismember command expands members as variadic arguments'] = static func
 
     $assert($arguments[0] === 'set:0', 'Unexpected smismember key.');
     $assert(count($arguments) === 4, 'smismember should pass the key plus each member as a separate argument.');
+};
+
+$tests['mget command groups contiguous keys into a single argument'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $command = $registry->resolve('mget')[0];
+    $keyspace = ['string:0', 'string:1', 'string:2', 'string:3'];
+    $arguments = $command->buildArguments('string:2', $payloads, 3, $keyspace, 2);
+
+    $assert(count($arguments) === 1, 'mget should pass a single key list argument.');
+    $assert($arguments[0] === ['string:2', 'string:3', 'string:0'], 'mget should wrap across the string keyspace without duplicates.');
+};
+
+$tests['mset command builds a key value map for the selected keys'] = static function () use ($assert): void {
+    $registry = new CommandRegistry();
+    $payloads = new PayloadFactory(8);
+    $command = $registry->resolve('mset')[0];
+    $keyspace = ['string:0', 'string:1', 'string:2'];
+    $arguments = $command->buildArguments('string:1', $payloads, 2, $keyspace, 1);
+
+    $assert(count($arguments) === 1, 'mset should pass a single key/value map argument.');
+    $assert(array_keys($arguments[0]) === ['string:1', 'string:2'], 'mset should target the selected key slice.');
+    $assert($arguments[0]['string:1'] === $payloads->string(1), 'mset should assign deterministic payloads to the first key.');
+    $assert($arguments[0]['string:2'] === $payloads->string(2), 'mset should assign deterministic payloads to the second key.');
 };
 
 $tests['help output documents debug introspection flag'] = static function () use ($assert): void {

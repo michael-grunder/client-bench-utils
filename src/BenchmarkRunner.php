@@ -146,8 +146,9 @@ final class BenchmarkRunner
      */
     private function executeOperation(object $client, Operation $operation, PayloadFactory $payloads, array $keyspace): void
     {
-        $key = $keyspace[$operation->command->type->value][$operation->keyIndex];
-        $arguments = $operation->command->buildArguments($key, $payloads, $operation->variant);
+        $typeKeyspace = $keyspace[$operation->command->type->value];
+        $key = $typeKeyspace[$operation->keyIndex];
+        $arguments = $operation->command->buildArguments($key, $payloads, $operation->variant, $typeKeyspace, $operation->keyIndex);
 
         try {
             $result = $client->{$operation->command->clientMethod}(...$arguments);
